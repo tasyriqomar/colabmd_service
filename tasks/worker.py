@@ -7,10 +7,13 @@ import re
 import shutil
 import glob
 
+# Configure Redis connection with dynamic fallback to 127.0.0.1 for single-container hosting
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+
 celery_app = Celery(
     "colabmd_tasks",
-    broker="redis://redis:6379/0",
-    backend="redis://redis:6379/0"
+    broker=REDIS_URL,
+    backend=REDIS_URL
 )
 
 @celery_app.task
@@ -147,7 +150,7 @@ def generate_mol2_task(work_dir: str, input_pdb: str, ligand_name: str):
             lines = f.readlines()
             
         for i, line in enumerate(lines):
-            if line.strip() == "@<TRIPOS>MOLECULE":
+            if line.strip() == "@MOLECULE":
                 lines[i+1] = f"{ligand_name}\n"
                 break
                 
@@ -461,7 +464,7 @@ VERSION=0.7-purepython
 AUTHOR="Tsjerk A. Wassenaar, PhD (Updated for GMX 2019+)"
 
 DEPENDENCIES=(backward.py gmx python3)
-SDIR=$( [[ $0 != ${0%/*} ]] && cd ${0%/*}; pwd )
+SDIR=$( [[ \(0 !=\){0%/*} ]] && cd ${0%/*}; pwd )
 
 INP=
 TOP=
@@ -495,8 +498,8 @@ while [ -n "$1" ]; do
        -to)    AA=$2    ; shift 2; continue ;;
      -kick)    KICK=$2  ; shift 2; continue ;;
      -keep)    KEEP=true; shift  ; continue ;;
-      -nopr)   POSRE=false; shift; continue ;;
-         *)    shift ;;
+      -nopr)    POSRE=false; shift; continue ;;
+          *)    shift ;;
   esac
 done
 
@@ -505,16 +508,16 @@ done
 
 $POSRE && MDPDEF=-DPOSRES || MDPDEF=
 GARBAGE=()
-trash() { for item in $@; do GARBAGE[${#GARBAGE[@]}]=$item; done; }
+trash() { for item in \(@; do GARBAGE[\){#GARBAGE[@]}]=$item; done; }
 
 echo "=========================================================="
 echo " Running Initram v0.7 with Pure-Python Spatial De-Clasher"
 echo "=========================================================="
 
 GRO=$BW
-B="$SDIR/backward.py -f $INP -raw $RAW -o $GRO -kick $KICK -sol -p $TOP -po $OTP -n $NDX -from $CG -to $AA"
-echo $B; $B || exit 1
-trash $RAW $GRO
+B="\(SDIR/backward.py -f\)INP -raw \(RAW -o\)GRO -kick \(KICK -sol -p\)TOP -po \(OTP -n\)NDX -from \(CG -to\)AA"
+echo \(B;\)B || exit 1
+trash \(RAW\)GRO
 
 # --- ZERO-DEPENDENCY PURE PYTHON SPATIAL DE-CLASHER ---
 python3 - << 'EOF'
@@ -620,10 +623,10 @@ constraints               = none
 nstxout-compressed        = 0
 __MDP__
 
-    G="gmx grompp -f $mdp -c $GRO -n $NDX -p $OTP -o $BASE -maxwarn 2"
-    echo $G; $G || exit 1
-    M="gmx mdrun -deffnm $BASE -v -nt $NP"
-    echo $M; $M || { echo "FATAL: EM1 failed."; exit 1; }
+    G="gmx grompp -f \(mdp -c\)GRO -n \(NDX -p\)OTP -o $BASE -maxwarn 2"
+    echo \(G;\)G || exit 1
+    M="gmx mdrun -deffnm \(BASE -v -nt\)NP"
+    echo \(M;\)M || { echo "FATAL: EM1 failed."; exit 1; }
 
     trash $BASE.*
     GRO=$((i++))-EM.gro
@@ -653,10 +656,10 @@ nstxout-compressed        = 0
 __MDP__
     mdp=$BASE.mdp
 
-    G="gmx grompp -f $mdp -c $GRO -n $NDX -p $OTP -o $BASE -maxwarn 2"
-    echo $G; $G || exit 1
-    M="gmx mdrun -deffnm $BASE -v -nt $NP"
-    echo $M; $M || { echo "FATAL: EM2 failed."; exit 1; }
+    G="gmx grompp -f \(mdp -c\)GRO -n \(NDX -p\)OTP -o $BASE -maxwarn 2"
+    echo \(G;\)G || exit 1
+    M="gmx mdrun -deffnm \(BASE -v -nt\)NP"
+    echo \(M;\)M || { echo "FATAL: EM2 failed."; exit 1; }
 
     trash $BASE.*
     GRO=$i-EM.gro
@@ -672,7 +675,7 @@ if [ "$MDSTEPS" -gt 0 ]; then
     IFS=$ifs
 
     for DELTA_T in ${DT[@]}; do
-        BASE=$((++i))-mdpr-$DELTA_T
+        BASE=\(((++i))-mdpr-\)DELTA_T
         mdp=$BASE.mdp
 
 cat << __MDP__ > $mdp
@@ -696,16 +699,16 @@ constraints               = h-bonds
 nstxout-compressed        = 0
 __MDP__
 
-      G="gmx grompp -f $mdp -c $GRO -r $BW -p $OTP -o $BASE -maxwarn 2"
-      echo $G; $G || exit 1
-      M="gmx mdrun -deffnm $BASE -v -nt $NP"
-      echo $M; $M || { echo "FATAL: Step $BASE (MD) failed."; exit 1; }
+      G="gmx grompp -f \(mdp -c\)GRO -r \(BW -p\)OTP -o $BASE -maxwarn 2"
+      echo \(G;\)G || exit 1
+      M="gmx mdrun -deffnm \(BASE -v -nt\)NP"
+      echo \(M;\)M || { echo "FATAL: Step $BASE (MD) failed."; exit 1; }
       trash $BASE.*
       GRO=$BASE.gro
     done
 fi
 
-cp $GRO $OUT
+cp \(GRO\)OUT
 rm -f ${GARBAGE[@]}
 echo "Backmapping successfully completed!"
 """
@@ -1403,14 +1406,14 @@ def run_pca_fel_task(job_id: str, backbone_group: int):
         return {"status": "error", "message": "Missing required trajectory files. Please ensure Backmapping completed."}
         
     try:
-        # Define group selection inputs (fit and analysis are the same group)[cite: 10]
+        # Define group selection inputs (fit and analysis are the same group)
         group_input = f"{backbone_group} {backbone_group}\n"
         
-        # 1. Covariance Analysis[cite: 10]
+        # 1. Covariance Analysis
         covar_cmd = f"gmx covar -f {xtc_file} -s {tpr_file} -n {ndx_file} -o {pca_dir}/eigenval.xvg -v {pca_dir}/eigenvec.trr -av {pca_dir}/average.pdb -l {pca_dir}/covar.log -b 0 -tu ns"
         subprocess.run(covar_cmd, input=group_input, shell=True, check=True, text=True, cwd=pca_dir)
         
-        # 2. Eigenvector Components (1-2, 1-3, 2-3)[cite: 10]
+        # 2. Eigenvector Components (1-2, 1-3, 2-3)
         projections = [
             ("1", "2"), ("1", "3"), ("2", "3")
         ]
@@ -1419,11 +1422,11 @@ def run_pca_fel_task(job_id: str, backbone_group: int):
             anaeig_cmd = f"gmx anaeig -v {pca_dir}/eigenvec.trr -f {xtc_file} -s {tpr_file} -n {ndx_file} -comp {pca_dir}/eigcomp{first}-{last}.xvg -rmsf {pca_dir}/eigrmsf{first}-{last}.xvg -2d {pca_dir}/2dproj{first}-{last}.xvg -b 0 -tu ns -first {first} -last {last}"
             subprocess.run(anaeig_cmd, input=group_input, shell=True, check=True, text=True, cwd=pca_dir)
             
-        # 3. FEL Sham Execution[cite: 10]
+        # 3. FEL Sham Execution
         sham_cmd = f"gmx sham -f {pca_dir}/2dproj1-2.xvg -notime -ls {pca_dir}/gibb1-2.xpm"
         subprocess.run(sham_cmd, shell=True, check=True, text=True, cwd=pca_dir)
         
-        # 4. Download Scripts[cite: 10]
+        # 4. Download Scripts
         scripts = {
             "xpm2txt.py": "https://raw.githubusercontent.com/tasyriqomar/ColabMD-Edu_Protein-Ligand/refs/heads/main/xpm2txt.py",
             "PCA.py": "https://raw.githubusercontent.com/tasyriqomar/ColabMD-Edu_Protein-Ligand/refs/heads/main/PCA.py",
