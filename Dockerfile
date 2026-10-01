@@ -2,12 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# 1. Install system dependencies (removed gromacs from here)
+# 1. Install system dependencies (added redis-server for Celery task queuing)
 RUN apt-get update && apt-get install -y \
     openbabel \
     wget \
     git \
     dssp \
+    redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 # 1.5 Install Miniconda and Dependencies (Auto-detects Architecture for Apple/Intel)
@@ -71,4 +72,5 @@ WORKDIR /app
 # 5. Copy the app
 COPY . .
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 & streamlit run frontend/app.py --server.port ${PORT:-8501} --server.address 0.0.0.0"]
+# 6. Launch Redis, Celery worker, FastAPI backend, and Streamlit frontend together
+CMD ["sh", "-c", "service redis-server start && celery -A tasks.worker.celery_app worker --loglevel=info & uvicorn main:app --host 0.0.0.0 --port 8000 & streamlit run frontend/app.py --server.port ${PORT:-8501} --server.address 0.0.0.0"]
