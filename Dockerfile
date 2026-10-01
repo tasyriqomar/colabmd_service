@@ -73,4 +73,4 @@ WORKDIR /app
 COPY . .
 
 # 6. Launch Redis, Celery worker, FastAPI backend, and Streamlit frontend together
-CMD ["sh", "-c", "service redis-server start && celery -A tasks.worker.celery_app worker --loglevel=info & uvicorn main:app --host 0.0.0.0 --port 8000 & streamlit run frontend/app.py --server.port ${PORT:-8501} --server.address 0.0.0.0"]
+CMD ["sh", "-c", "service redis-server start && celery -A tasks.worker.celery_app worker --concurrency=1 --loglevel=info & uvicorn main:app --host 0.0.0.0 --port 8000 & streamlit run frontend/app.py --server.port ${PORT:-8501} --server.address 0.0.0.0"]
