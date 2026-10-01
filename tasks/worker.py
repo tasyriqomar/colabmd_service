@@ -61,7 +61,7 @@ def run_vina_docking(prot_path: str, lig_path: str, work_dir: str, ligand_code: 
                 "receptor = protein.pdbqt\n"
                 "ligand = ligand.pdbqt\n"
                 "center_x = 130\ncenter_y = 110\ncenter_z = 120\n"
-                "size_x = 150\nsize_y = 150\nsize_z = 150\n"
+                "size_x = 100\nsize_y = 100\nsize_z = 100\n"
                 "exhaustiveness = 4\n"
                 "cpu = 1\n"
             )
