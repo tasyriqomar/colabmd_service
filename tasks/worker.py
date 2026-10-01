@@ -62,7 +62,8 @@ def run_vina_docking(prot_path: str, lig_path: str, work_dir: str, ligand_code: 
                 "ligand = ligand.pdbqt\n"
                 "center_x = 130\ncenter_y = 110\ncenter_z = 120\n"
                 "size_x = 150\nsize_y = 150\nsize_z = 150\n"
-                "exhaustiveness = 8\n"
+                "exhaustiveness = 4\n"
+                "cpu = 1\n"
             )
 
         # 4. Run AutoDock Vina
@@ -457,7 +458,7 @@ def run_cgmd_prep_workflow(work_dir: str, protein_pdb: str, ligand_itp: str, lig
 # BACKMAPPING TASKS
 # ==========================================
 
-INITRAM_SCRIPT = """#!/bin/bash
+INITRAM_SCRIPT = r"""#!/bin/bash
 
 PROGRAM=initram.sh
 VERSION=0.7-purepython
