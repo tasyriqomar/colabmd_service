@@ -7,16 +7,25 @@ import time
 
 # 1. Import the routers from your routers folder
 from routers import preparation
-from routers import analysis  # <-- ADDED THIS IMPORT
+from routers import analysis
 
 app = FastAPI(title="ColabMD-Edu Web Service")
+
+# --- ROOT ENDPOINT HANDLER ---
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "Welcome to ColabMD-Edu Web Service API",
+        "docs": "/docs"
+    }
 
 SHARED_DIR = "/app/shared_data"
 os.makedirs(SHARED_DIR, exist_ok=True)
 
 # 2. Register the routers right here!
 app.include_router(preparation.router, prefix="/api/v1")
-app.include_router(analysis.router, prefix="/api/v1")  # <-- ADDED THIS TO REGISTER TAB 5
+app.include_router(analysis.router, prefix="/api/v1")
 
 @app.post("/api/v1/run-docking")
 async def run_docking(
