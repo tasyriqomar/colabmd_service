@@ -12,7 +12,7 @@ import pandas as pd  # <-- ADD THIS IMPORT
 from stmol import showmol
 import py3Dmol
 
-API_URL = "http://api:8000/api/v1"
+API_URL = "http://127.0.0.1:8000/api/v1"
 
 # 1. Update Title of Web
 st.set_page_config(page_title="ColabMD Web Service", page_icon="🧬")
