@@ -735,7 +735,7 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
         subprocess.run([
             "gmx", "pdb2gmx", "-f", protein_pdb, "-o", "aa.gro", 
             "-water", "tip3p", "-ignh", "-ff", "charmm36-feb2026_cgenff-5.0"
-        ], cwd=wd, input="1\n", text=True, check=True)
+        ], cwd=wd, input="1\n", capture_output=True, text=True, check=True)
         
         # 3. Manually add ligand info into topol.top
         topol_path = wd / "topol.top"
@@ -764,7 +764,7 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
         with open(initram_path, "w") as f:
             f.write(INITRAM_SCRIPT)
         
-        subprocess.run(["chmod", "+x", "initram-v5.sh", "backward.py"], cwd=wd, check=True)
+        subprocess.run(["chmod", "+x", "initram-v5.sh", "backward.py"], cwd=wd, capture_output=True, text=True, check=True)
         
         # 5. --- PARSE CORRECT LIGAND ATOM NAMES FROM CG ITP ---
         itp_atom_names = []
@@ -792,7 +792,7 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
             subprocess.run([
                 "gmx", "trjconv", "-f", xtc_file, "-s", system_gro, "-n", ndx_file, 
                 "-o", f"trj_{i}ns.gro", "-dump", f"{i}000"
-            ], cwd=wd, input="16\n", text=True, check=True)
+            ], cwd=wd, input="16\n", capture_output=True, text=True, check=True)
             
             # --- PATCH THE EXTRACTED FRAME WITH CORRECT ATOM NAMES ---
             with open(wd / f"trj_{i}ns.gro", "r") as f:
@@ -827,7 +827,7 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
             subprocess.run([
                 "./initram-v5.sh", "-f", f"trj_{i}ns.gro", "-o", f"aa_{i}ns.gro", 
                 "-to", "charmm36", "-p", "topol.top"
-            ], cwd=wd, env=env, check=True)
+            ], cwd=wd, env=env, capture_output=True, text=True, check=True)
             
             # ========================================================
             # ADDED: STRUCTURAL SCREENING FOR COLLAPSED LIGAND
@@ -866,7 +866,7 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
                     subprocess.run([
                         "./initram-v5.sh", "-f", f"trj_{i}ns.gro", "-o", f"aa_{i}ns.gro", 
                         "-to", "charmm36", "-p", "topol.top"
-                    ], cwd=wd, env=env, check=True)
+                    ], cwd=wd, env=env, capture_output=True, text=True, check=True)
             
             # Grep logic replacement (Update Header)
             with open(wd / f"trj_{i}ns.gro", "r") as f:
@@ -883,7 +883,7 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
             # Convert final GRO to XTC
             subprocess.run([
                 "gmx", "trjconv", "-f", f"aa_{i}ns.gro", "-o", f"aa_{i}ns.xtc"
-            ], cwd=wd, check=True)
+            ], cwd=wd, capture_output=True, text=True, check=True)
             
             # Store in output directories
             shutil.copy(wd / f"aa_{i}ns.xtc", out_xtc_dir / f"aa_{i}ns.xtc")
@@ -892,9 +892,8 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
         # 7. Concatenate the xtc trajectories
         xtc_files = [f.name for f in out_xtc_dir.glob("*.xtc")]
         if xtc_files:
-            # Change output to combine.xtc instead of all.xtc
             trjcat_cmd = ["gmx", "trjcat", "-f"] + xtc_files + ["-o", "combine.xtc"]
-            subprocess.run(trjcat_cmd, cwd=out_xtc_dir, check=True)
+            subprocess.run(trjcat_cmd, cwd=out_xtc_dir, capture_output=True, text=True, check=True)
 
         # 8. Copy the earliest loop and generate the all-atomic .tpr
         earliest_gro = f"aa_{loop_from}ns.gro"
@@ -912,7 +911,7 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
             "-o", "dynamic.tpr", 
             "-maxwarn", "5"
         ]
-        subprocess.run(grompp_cmd, cwd=wd, check=True)
+        subprocess.run(grompp_cmd, cwd=wd, capture_output=True, text=True, check=True)
 
         # 9. Copy and paste the generated .tpr into all_xtc folder
         source_tpr = wd / "dynamic.tpr"
@@ -931,25 +930,19 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
                 "-pbc", "mol", 
                 "-center"
             ]
-            # Input "1\n0\n" selects "Protein" for centering and "System" for output
-            subprocess.run(trjconv_pbc_cmd, cwd=out_xtc_dir, input="1\n0\n", text=True, check=True)
+            subprocess.run(trjconv_pbc_cmd, cwd=out_xtc_dir, input="1\n0\n", capture_output=True, text=True, check=True)
             
-            # (Optional) Remove combine.xtc after to save storage space
             (out_xtc_dir / "combine.xtc").unlink()
 
         # 10. Generate index file (all atomic)
         make_ndx_cmd = ["gmx", "make_ndx", "-f", "dynamic.tpr", "-o", "index.ndx"]
-        subprocess.run(make_ndx_cmd, cwd=out_xtc_dir, input="q\n", text=True, check=True)
+        subprocess.run(make_ndx_cmd, cwd=out_xtc_dir, input="q\n", capture_output=True, text=True, check=True)
             
-        # --- ADDED: CLEANUP REDUNDANT FILES FROM ROOT DIRECTORY ---
-        for f in wd.glob("aa_*ns.gro"):
-            f.unlink()
-        for f in wd.glob("aa_*ns.xtc"):
-            f.unlink()
-        for f in wd.glob("trj_*ns.gro"):
-            f.unlink()
+        # 11. Cleanup and Zip
+        for f in wd.glob("aa_*ns.gro"): f.unlink()
+        for f in wd.glob("aa_*ns.xtc"): f.unlink()
+        for f in wd.glob("trj_*ns.gro"): f.unlink()
             
-        # 11. Zip the results
         zip_path = wd / "backmapped_results.zip"
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for root, dirs, files in os.walk(out_xtc_dir):
