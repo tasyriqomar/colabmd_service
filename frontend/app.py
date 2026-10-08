@@ -51,6 +51,10 @@ if "job_id" not in st.session_state:
     st.session_state.job_id = ""
 if "plip_zip_bytes" not in st.session_state:
     st.session_state.plip_zip_bytes = None
+if "bm_task_id" not in st.session_state:
+    st.session_state.bm_task_id = None
+if "bm_job_id" not in st.session_state:
+    st.session_state.bm_job_id = None
 
 # Initialize session state for CGMD and MM-GBSA
 if "cgmd_zip_bytes" not in st.session_state:
@@ -884,6 +888,8 @@ with tab4:
     all_files = [protein_pdb_bm, ligand_map, xtc_file, tpr_file, mdp_file, ndx_file, lig_itp_file, lig_prm_file, lig_cg_itp_file, system_gro]
     
     if st.button("Run Backmapping"):
+        st.session_state.bm_task_id = None
+        
         if not all(all_files):
             st.warning("⚠️ Please upload all 10 required files.")
         else:
@@ -919,33 +925,19 @@ with tab4:
                         if status == "SUCCESS":
                             task_result = status_res.get("result", {})
                             if task_result.get("status") == "success":
-                                status_placeholder.success(f"✅ Backmapping Complete for frames {loop_from} to {loop_until}!")
-                                
+                                # Extract Job ID
                                 res_file_path = task_result.get("result_file", "")
                                 if res_file_path:
                                     extracted_job_id = res_file_path.replace('\\', '/').split('/')[-2]
+                                    
+                                    # Save to session state so Tabs 5-9 can use it
                                     st.session_state.job_id = extracted_job_id
-                                    st.session_state.plip_job_id = extracted_job_id
-                                    st.session_state.mmgbsa_job_id = extracted_job_id
+                                    st.session_state.bm_job_id = extracted_job_id
                                 
-                                dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                # Save the task ID to reveal the download link
+                                st.session_state.bm_task_id = task_id
                                 
-                                st.download_button(
-                                    label="⬇️ Download Backmapped Trajectories (.zip)",
-                                    data=dl.content,
-                                    file_name=f"{ligand_code}_backmapped_results.zip",
-                                    mime="application/zip",
-                                    key="backmap_download"
-                                )
-                                st.info(
-                                    "**Containing:**\n"
-                                    "1. `gro` folder\n"
-                                    "2. `all_xtc` folder\n"
-                                    "3. `all.xtc` file\n"
-                                    "4. `dynamic.tpr` file\n"
-                                    "5. `index.ndx` file"
-                                )
-                                
+                                # Force UI refresh
                                 time.sleep(1)
                                 st.rerun()
                             else:
@@ -959,6 +951,19 @@ with tab4:
                             time.sleep(3)
                 else:
                     st.error(f"Error {response.status_code}: {response.text}")
+
+    # --- Render Download Link Outside the Loop ---
+    if st.session_state.get("bm_task_id"):
+        st.markdown("---")
+        st.success(f"✅ Backmapping Complete! Job ID: `{st.session_state.bm_job_id}`")
+        
+        # Direct URL bypassing Streamlit memory completely to prevent crashes
+        dl_url = f"{API_URL}/download-prep-result/{st.session_state.bm_task_id}"
+        
+        st.markdown(f"### [⬇️ Click Here to Download Backmapped Trajectories (.zip)]({dl_url})")
+        st.info(
+            "**Your Job ID is now automatically linked to Tabs 5, 6, 7, 8, and 9!** You can proceed directly to those tabs without re-uploading files."
+        )
 
 # ==========================================
 # TAB 5: GROMACS 
