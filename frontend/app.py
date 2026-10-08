@@ -925,19 +925,21 @@ with tab4:
                         if status == "SUCCESS":
                             task_result = status_res.get("result", {})
                             if task_result.get("status") == "success":
-                                # Extract Job ID
                                 res_file_path = task_result.get("result_file", "")
                                 if res_file_path:
                                     extracted_job_id = res_file_path.replace('\\', '/').split('/')[-2]
                                     
-                                    # Save to session state so Tabs 5-9 can use it
-                                    st.session_state.job_id = extracted_job_id
-                                    st.session_state.bm_job_id = extracted_job_id
+                                    # Force Job ID into master state AND all individual tab text-input keys
+                                    st.session_state["job_id"] = extracted_job_id
+                                    st.session_state["traj_job_id"] = extracted_job_id
+                                    st.session_state["ttclust_job_id"] = extracted_job_id
+                                    st.session_state["plip_job_id"] = extracted_job_id
+                                    st.session_state["mmgbsa_job_id"] = extracted_job_id
+                                    st.session_state["pca_job_id"] = extracted_job_id
                                 
-                                # Save the task ID to reveal the download link
-                                st.session_state.bm_task_id = task_id
+                                # Store task ID so the download block stays rendered across reruns
+                                st.session_state["bm_task_id"] = task_id
                                 
-                                # Force UI refresh
                                 time.sleep(1)
                                 st.rerun()
                             else:
@@ -952,18 +954,14 @@ with tab4:
                 else:
                     st.error(f"Error {response.status_code}: {response.text}")
 
-    # --- Render Download Link Outside the Loop ---
-    if st.session_state.get("bm_task_id"):
+    # --- PERSISTENT DOWNLOAD & LINKING DISPLAY (Rendered outside button click) ---
+    if st.session_state.get("bm_task_id") and st.session_state.get("job_id"):
         st.markdown("---")
-        st.success(f"✅ Backmapping Complete! Job ID: `{st.session_state.bm_job_id}`")
+        st.success(f"✅ Backmapping Complete! **Job ID:** `{st.session_state.job_id}`")
         
-        # Direct URL bypassing Streamlit memory completely to prevent crashes
         dl_url = f"{API_URL}/download-prep-result/{st.session_state.bm_task_id}"
-        
         st.markdown(f"### [⬇️ Click Here to Download Backmapped Trajectories (.zip)]({dl_url})")
-        st.info(
-            "**Your Job ID is now automatically linked to Tabs 5, 6, 7, 8, and 9!** You can proceed directly to those tabs without re-uploading files."
-        )
+        st.info("🔗 **Job ID auto-linked to Tabs 5–9!** You can now open Tabs 5 through 9 directly without manually re-entering your Job ID.")
 
 # ==========================================
 # TAB 5: GROMACS 
