@@ -465,7 +465,7 @@ VERSION=0.7-purepython
 AUTHOR="Tsjerk A. Wassenaar, PhD (Updated for GMX 2019+)"
 
 DEPENDENCIES=(backward.py gmx python3)
-SDIR=$( [[ \(0 !=\){0%/*} ]] && cd ${0%/*}; pwd )
+SDIR=$( [[ $0 != ${0%/*} ]] && cd ${0%/*}; pwd )
 
 INP=
 TOP=
@@ -499,8 +499,8 @@ while [ -n "$1" ]; do
        -to)    AA=$2    ; shift 2; continue ;;
      -kick)    KICK=$2  ; shift 2; continue ;;
      -keep)    KEEP=true; shift  ; continue ;;
-      -nopr)    POSRE=false; shift; continue ;;
-          *)    shift ;;
+      -nopr)   POSRE=false; shift; continue ;;
+          *)   shift ;;
   esac
 done
 
@@ -509,16 +509,16 @@ done
 
 $POSRE && MDPDEF=-DPOSRES || MDPDEF=
 GARBAGE=()
-trash() { for item in \(@; do GARBAGE[\){#GARBAGE[@]}]=$item; done; }
+trash() { for item in $@; do GARBAGE[${#GARBAGE[@]}]=$item; done; }
 
 echo "=========================================================="
 echo " Running Initram v0.7 with Pure-Python Spatial De-Clasher"
 echo "=========================================================="
 
 GRO=$BW
-B="\(SDIR/backward.py -f\)INP -raw \(RAW -o\)GRO -kick \(KICK -sol -p\)TOP -po \(OTP -n\)NDX -from \(CG -to\)AA"
-echo \(B;\)B || exit 1
-trash \(RAW\)GRO
+B="$SDIR/backward.py -f $INP -raw $RAW -o $GRO -kick $KICK -sol -p $TOP -po $OTP -n $NDX -from $CG -to $AA"
+echo $B; $B || exit 1
+trash $RAW $GRO
 
 # --- ZERO-DEPENDENCY PURE PYTHON SPATIAL DE-CLASHER ---
 python3 - << 'EOF'
@@ -624,10 +624,10 @@ constraints               = none
 nstxout-compressed        = 0
 __MDP__
 
-    G="gmx grompp -f \(mdp -c\)GRO -n \(NDX -p\)OTP -o $BASE -maxwarn 2"
-    echo \(G;\)G || exit 1
-    M="gmx mdrun -deffnm \(BASE -v -nt\)NP"
-    echo \(M;\)M || { echo "FATAL: EM1 failed."; exit 1; }
+    G="gmx grompp -f $mdp -c $GRO -n $NDX -p $OTP -o $BASE -maxwarn 2"
+    echo $G; $G || exit 1
+    M="gmx mdrun -deffnm $BASE -v -nt $NP"
+    echo $M; $M || { echo "FATAL: EM1 failed."; exit 1; }
 
     trash $BASE.*
     GRO=$((i++))-EM.gro
@@ -657,10 +657,10 @@ nstxout-compressed        = 0
 __MDP__
     mdp=$BASE.mdp
 
-    G="gmx grompp -f \(mdp -c\)GRO -n \(NDX -p\)OTP -o $BASE -maxwarn 2"
-    echo \(G;\)G || exit 1
-    M="gmx mdrun -deffnm \(BASE -v -nt\)NP"
-    echo \(M;\)M || { echo "FATAL: EM2 failed."; exit 1; }
+    G="gmx grompp -f $mdp -c $GRO -n $NDX -p $OTP -o $BASE -maxwarn 2"
+    echo $G; $G || exit 1
+    M="gmx mdrun -deffnm $BASE -v -nt $NP"
+    echo $M; $M || { echo "FATAL: EM2 failed."; exit 1; }
 
     trash $BASE.*
     GRO=$i-EM.gro
@@ -676,7 +676,7 @@ if [ "$MDSTEPS" -gt 0 ]; then
     IFS=$ifs
 
     for DELTA_T in ${DT[@]}; do
-        BASE=\(((++i))-mdpr-\)DELTA_T
+        BASE=$((++i))-mdpr-$DELTA_T
         mdp=$BASE.mdp
 
 cat << __MDP__ > $mdp
@@ -700,16 +700,16 @@ constraints               = h-bonds
 nstxout-compressed        = 0
 __MDP__
 
-      G="gmx grompp -f \(mdp -c\)GRO -r \(BW -p\)OTP -o $BASE -maxwarn 2"
-      echo \(G;\)G || exit 1
-      M="gmx mdrun -deffnm \(BASE -v -nt\)NP"
-      echo \(M;\)M || { echo "FATAL: Step $BASE (MD) failed."; exit 1; }
+      G="gmx grompp -f $mdp -c $GRO -r $BW -p $OTP -o $BASE -maxwarn 2"
+      echo $G; $G || exit 1
+      M="gmx mdrun -deffnm $BASE -v -nt $NP"
+      echo $M; $M || { echo "FATAL: Step $BASE (MD) failed."; exit 1; }
       trash $BASE.*
       GRO=$BASE.gro
     done
 fi
 
-cp \(GRO\)OUT
+cp $GRO $OUT
 rm -f ${GARBAGE[@]}
 echo "Backmapping successfully completed!"
 """
