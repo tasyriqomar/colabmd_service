@@ -1306,6 +1306,12 @@ def run_trajectory_analysis_task(job_id: str, rmsd_group: int, rmsf_group: int, 
     """Run RMSD, RMSF, and Rg calculations on the backmapped trajectories."""
     import matplotlib.pyplot as plt
     
+    # FIX: Ensure worker process is in a valid directory
+    try:
+        os.chdir("/app")
+    except Exception:
+        pass
+
     job_dir = Path(f"/app/shared_data/{job_id}")
     xtc_dir = job_dir / "all_xtc"
     analysis_dir = job_dir / "analysis" / "trajectory"
@@ -1320,20 +1326,19 @@ def run_trajectory_analysis_task(job_id: str, rmsd_group: int, rmsf_group: int, 
         return {"status": "error", "message": "Missing required trajectory files (all.xtc, dynamic.tpr, or index.ndx). Please ensure Backmapping completed successfully."}
         
     try:
-        # 1. RMSD Calculation (Native support for -tu ns)
+        # 1. RMSD Calculation (Added cwd=analysis_dir to prevent getcwd() error)
         rmsd_cmd = f"echo '{rmsd_group} {rmsd_group}' | gmx rms -s {tpr_file} -f {xtc_file} -n {ndx_file} -o {analysis_dir}/rmsd.xvg -tu ns"
-        subprocess.run(rmsd_cmd, shell=True, check=True, capture_output=True, text=True)
+        subprocess.run(rmsd_cmd, shell=True, check=True, capture_output=True, text=True, cwd=analysis_dir)
         
         # 2. RMSF Calculation (-res calculates average per residue)
         rmsf_cmd = f"echo '{rmsf_group}' | gmx rmsf -s {tpr_file} -f {xtc_file} -n {ndx_file} -o {analysis_dir}/rmsf.xvg -res"
-        subprocess.run(rmsf_cmd, shell=True, check=True, capture_output=True, text=True)
+        subprocess.run(rmsf_cmd, shell=True, check=True, capture_output=True, text=True, cwd=analysis_dir)
         
         # 3. Radius of Gyration Calculation (Outputs in ps, NO -tu flag)
         rg_cmd = f"echo '{rg_group}' | gmx gyrate -s {tpr_file} -f {xtc_file} -n {ndx_file} -o {analysis_dir}/gyration.xvg"
-        subprocess.run(rg_cmd, shell=True, check=True, capture_output=True, text=True)
+        subprocess.run(rg_cmd, shell=True, check=True, capture_output=True, text=True, cwd=analysis_dir)
         
         # --- Helper function to plot XVG files ---
-        # Added x_scale to safely convert ps to ns where needed
         def plot_xvg(xvg_path, title, xlabel, ylabel, out_png, x_scale=1.0):
             x, y = [], []
             if Path(xvg_path).exists():
@@ -1342,7 +1347,6 @@ def run_trajectory_analysis_task(job_id: str, rmsd_group: int, rmsf_group: int, 
                         if not line.startswith(('@', '#')):
                             parts = line.split()
                             if len(parts) >= 2:
-                                # Multiply x by the scale (e.g., 0.001 for ps to ns)
                                 x.append(float(parts[0]) * x_scale)
                                 y.append(float(parts[1]))
                 plt.figure(figsize=(8, 5))
@@ -1356,13 +1360,8 @@ def run_trajectory_analysis_task(job_id: str, rmsd_group: int, rmsf_group: int, 
                 plt.close()
 
         # 4. Generate Plots
-        # RMSD is already in ns, scale is 1.0
         plot_xvg(analysis_dir / "rmsd.xvg", "RMSD Over Time", "Time (ns)", "RMSD (nm)", analysis_dir / "RMSD.png", x_scale=1.0)
-        
-        # RMSF uses Residue Numbers on the X-axis, scale is 1.0
         plot_xvg(analysis_dir / "rmsf.xvg", "Per-Residue RMSF", "Residue Number", "RMSF (nm)", analysis_dir / "RMSF.png", x_scale=1.0)
-        
-        # Gyration is in ps, we apply x_scale=0.001 to convert to ns!
         plot_xvg(analysis_dir / "gyration.xvg", "Radius of Gyration", "Time (ns)", "Rg (nm)", analysis_dir / "Gyration.png", x_scale=0.001)
         
         # 5. Zip results
