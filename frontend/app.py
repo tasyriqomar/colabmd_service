@@ -12,10 +12,17 @@ import pandas as pd  # <-- ADD THIS IMPORT
 from stmol import showmol
 import py3Dmol
 
-API_URL = "http://127.0.0.1:8000/api/v1"
+# --- NEW BACKEND ROUTING ---
+st.sidebar.header("⚙️ Backend Connections")
+st.sidebar.markdown("Use this URL to route Tab 1 to Google Colab.")
+COLAB_API_URL = st.sidebar.text_input("Colab Ngrok URL (Tab 1)", value="https://YOUR-NGROK-URL.ngrok-free.app/api/v1")
+
+# Static URL for Render handling Tab 2 and beyond
+RENDER_API_URL = "http://127.0.0.1:8000/api/v1"
+# ---------------------------
 
 # 1. Update Title of Web
-st.set_page_config(page_title="ColabMD Web Service", page_icon="🧬")
+st.set_page_config(page_title="ColabMD Web Service", page_icon="🧬", layout="wide")
 st.title("🧬 ColabMD Web Service")
 
 # Initialize session state for persistent data across UI interactions
@@ -82,7 +89,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
 ])
 
 # ==========================================
-# TAB 1: DOCKING
+# TAB 1: DOCKING (Uses Colab API)
 # ==========================================
 with tab1:
     st.header("AutoDock Vina Docking")
@@ -123,7 +130,7 @@ with tab1:
             if lig_smiles:
                 data["ligand_smiles"] = lig_smiles
                 
-            res = requests.post(f"{API_URL}/run-docking", files=files, data=data)
+            res = requests.post(f"{COLAB_API_URL}/run-docking", files=files, data=data)
             
         if res.status_code == 200:
             st.session_state.docking_task_id = res.json()["task_id"]
@@ -131,7 +138,7 @@ with tab1:
             status_placeholder = st.empty()
             
             while True:
-                status_res = requests.get(f"{API_URL}/status/{st.session_state.docking_task_id}").json()
+                status_res = requests.get(f"{COLAB_API_URL}/status/{st.session_state.docking_task_id}").json()
                 status = status_res["status"]
                 
                 if status == "SUCCESS":
@@ -148,11 +155,11 @@ with tab1:
                             # e.g. "/app/shared_data/job_1785741076/A20_complex.pdb" -> "job_1785741076"
                             st.session_state.job_id = complex_file_path.replace('\\', '/').split('/')[-2]
                         
-                        download_res = requests.get(f"{API_URL}/download/{st.session_state.docking_task_id}")
+                        download_res = requests.get(f"{COLAB_API_URL}/download/{st.session_state.docking_task_id}")
                         if download_res.status_code == 200:
                             st.session_state.best_pose_bytes = download_res.content
                             
-                        complex_res = requests.get(f"{API_URL}/download-complex/{st.session_state.docking_task_id}")
+                        complex_res = requests.get(f"{COLAB_API_URL}/download-complex/{st.session_state.docking_task_id}")
                         if complex_res.status_code == 200:
                             st.session_state.complex_bytes = complex_res.content
                     else:
@@ -200,11 +207,20 @@ with tab1:
         showmol(view, height=500, width=700)
 
 # ==========================================
-# TAB 2: LIGAND PREPARATION
+# TAB 2: LIGAND PREPARATION (Uses Render API)
 # ==========================================
 with tab2:
     st.header("CGenFF & Martini 3 Parameterization")
     st.info(f"Active Ligand Code: **{st.session_state.ligand_code}** (Change this in Tab 1)")
+    st.markdown("---")
+    
+    # --- ADDED: MANUAL UPLOADER TO BRIDGE COLAB & RENDER ---
+    st.markdown("### 📥 0. Bridge Files from Tab 1 (Colab)")
+    st.info("Since Docking ran on Colab, upload the downloaded `complex.pdb` here so Render can use it for coordinate generation.")
+    uploaded_complex = st.file_uploader(f"Upload Complex ({st.session_state.ligand_code}_complex.pdb)", type=["pdb"], key="upload_complex_tab2")
+    if uploaded_complex:
+        st.session_state.complex_bytes = uploaded_complex.getvalue()
+        st.success("Complex PDB successfully loaded into memory!")
     st.markdown("---")
     
     st.subheader("All-atomic (AA)")
@@ -214,16 +230,17 @@ with tab2:
         if not st.session_state.docking_task_id:
             st.warning("Please run docking first!")
         else:
-            with st.spinner("Running OpenBabel conversion..."):
-                res = requests.post(f"{API_URL}/generate-mol2", json={"task_id": st.session_state.docking_task_id, "ligand_name": st.session_state.ligand_code})
+            with st.spinner("Running OpenBabel conversion on Colab..."):
+                # Use COLAB_API_URL here because the backend task relies on the docking job_id folder
+                res = requests.post(f"{COLAB_API_URL}/generate-mol2", json={"task_id": st.session_state.docking_task_id, "ligand_name": st.session_state.ligand_code})
                 if res.status_code == 200:
                     task_id = res.json()["task_id"]
                     while True:
-                        status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                        status_res = requests.get(f"{COLAB_API_URL}/status/{task_id}").json()
                         if status_res["status"] == "SUCCESS":
                             task_result = status_res.get("result", {})
                             if task_result.get("status") == "success":
-                                dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                dl = requests.get(f"{COLAB_API_URL}/download-prep-result/{task_id}")
                                 st.session_state.mol2_bytes = dl.content
                                 st.success(f"✅ {st.session_state.ligand_code}.mol2 generated successfully!")
                             else:
@@ -248,22 +265,22 @@ with tab2:
     up_mol2 = st.file_uploader(f"Upload {st.session_state.ligand_code}.mol2", type=["mol2"], key="mol2_up")
     
     if st.button("Generate Topologies AA") and str_file and up_mol2:
-        with st.spinner("Generating All-Atom topologies..."):
+        with st.spinner("Generating All-Atom topologies on Render..."):
             files = {
                 "mol2_file": (up_mol2.name, up_mol2.getvalue(), "chemical/x-mol2"),
                 "str_file": (str_file.name, str_file.getvalue(), "text/plain")
             }
             data = {"ligand_name": st.session_state.ligand_code}
-            res = requests.post(f"{API_URL}/run-aa-prep", files=files, data=data)
+            res = requests.post(f"{RENDER_API_URL}/run-aa-prep", files=files, data=data)
             
             if res.status_code == 200:
                 task_id = res.json()["task_id"]
                 while True:
-                    status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                    status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                     if status_res["status"] == "SUCCESS":
                         task_result = status_res.get("result", {})
                         if task_result.get("status") == "success":
-                            dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                            dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                             st.session_state.aa_zip_bytes = dl.content
                             st.success("✅ AA Topologies Generated!")
                         else:
@@ -289,16 +306,16 @@ with tab2:
     lig_smiles = st.text_input("Ligand SMILES String", key="cg_smiles")
         
     if st.button("Generate Topologies CG") and lig_smiles:
-        with st.spinner("Generating Coarse-Grained topologies..."):
-            res = requests.post(f"{API_URL}/run-cg-prep", data={"ligand_name": st.session_state.ligand_code, "smiles": lig_smiles})
+        with st.spinner("Generating Coarse-Grained topologies on Render..."):
+            res = requests.post(f"{RENDER_API_URL}/run-cg-prep", data={"ligand_name": st.session_state.ligand_code, "smiles": lig_smiles})
             if res.status_code == 200:
                 task_id = res.json()["task_id"]
                 while True:
-                    status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                    status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                     if status_res["status"] == "SUCCESS":
                         task_result = status_res.get("result", {})
                         if task_result.get("status") == "success":
-                            dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                            dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                             st.session_state.cg_zip_bytes = dl.content
                             st.success("✅ CG Topologies Generated!")
                         else:
@@ -568,7 +585,7 @@ with tab2:
     
     if st.button("Generate .gro File"):
         if not st.session_state.mapped_cg_itp or not st.session_state.complex_bytes or not st.session_state.aa_zip_bytes:
-            st.warning(f"⚠️ Please ensure you have generated the MAP Preview, AA Topologies, and have a docked {st.session_state.ligand_code}_complex.pdb!")
+            st.warning(f"⚠️ Please ensure you have generated the MAP Preview, AA Topologies, and have loaded {st.session_state.ligand_code}_complex.pdb from Tab 1!")
         else:
             try:
                 with st.spinner(f"Aligning PDB heavy atoms to exact docked coordinates from {st.session_state.ligand_code}_complex.pdb..."):
@@ -782,7 +799,7 @@ with tab2:
         st.text_area(".map File Preview", value=st.session_state.map_file_text, height=300)
 
 # ==========================================
-# TAB 3: CGMD PREPARATION (Continued execution)
+# TAB 3: CGMD PREPARATION (Uses Render API)
 # ==========================================
 with tab3:
     st.header("Coarse-Grained MD (CGMD) Preparation")
@@ -800,7 +817,7 @@ with tab3:
         if not prot_file_cg or not itp_file_cg or not gro_file_cg:
             st.warning("⚠️ Please upload the Protein PDB, Ligand ITP, and Ligand GRO files.")
         else:
-            with st.spinner("Queueing Martinize2 and GROMACS tools..."):
+            with st.spinner("Queueing Martinize2 and GROMACS tools on Render..."):
                 files = {
                     "protein_pdb": (prot_file_cg.name, prot_file_cg.getvalue(), "chemical/x-pdb"),
                     "ligand_itp": (itp_file_cg.name, itp_file_cg.getvalue(), "text/plain"),
@@ -808,16 +825,16 @@ with tab3:
                 }
                 data = {"ligand_code": ligand_code}
                 
-                # Call the FastAPI backend
-                response = requests.post(f"{API_URL}/run-cgmd-prep", files=files, data=data)
+                # Call the FastAPI backend on Render
+                response = requests.post(f"{RENDER_API_URL}/run-cgmd-prep", files=files, data=data)
                 
                 if response.status_code == 200:
                     task_id = response.json()["task_id"]
                     status_placeholder = st.empty()
                     
-                    # Poll Celery status
+                    # Poll Celery status on Render
                     while True:
-                        status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                        status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                         status = status_res["status"]
                         
                         if status == "SUCCESS":
@@ -826,7 +843,7 @@ with tab3:
                                 status_placeholder.success("✅ CGMD Preparation Complete!")
                                 
                                 # Download the result ZIP
-                                dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                                 if dl.status_code == 200:
                                     st.session_state.cgmd_zip_bytes = dl.content
                                     time.sleep(1)
@@ -861,7 +878,7 @@ with tab3:
     st.markdown("Proceed with Coarse-Grained MD Simulation in GPU Environment? Generate one using [ColabMD-Edu_Protein-Ligand_Run-CGMD.ipynb](https://github.com/tasyriqomar/ColabMD-Edu/blob/main/ColabMD_Edu_Protein_Ligand_Run_CGMD.ipynb)")
 
 # ==========================================
-# TAB 4: BACKMAPPING (CG to AA)
+# TAB 4: BACKMAPPING (Uses Render API)
 # ==========================================
 with tab4:
     st.header("Backmapping (CG to AA)")
@@ -892,7 +909,7 @@ with tab4:
         if not all(all_files):
             st.warning("⚠️ Please upload all 10 required files.")
         else:
-            with st.spinner(f"Running Backmapping loop from {loop_from} to {loop_until}..."):
+            with st.spinner(f"Running Backmapping loop from {loop_from} to {loop_until} on Render..."):
                 files = {
                     "protein_pdb": (protein_pdb_bm.name, protein_pdb_bm.getvalue(), "chemical/x-pdb"),
                     "ligand_map": (ligand_map.name, ligand_map.getvalue(), "text/plain"),
@@ -911,14 +928,14 @@ with tab4:
                     "loop_until": loop_until
                 }
                 
-                response = requests.post(f"{API_URL}/run-backmapping", files=files, data=data)
+                response = requests.post(f"{RENDER_API_URL}/run-backmapping", files=files, data=data)
                 
                 if response.status_code == 200:
                     task_id = response.json()["task_id"]
                     status_placeholder = st.empty()
                     
                     while True:
-                        status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                        status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                         status = status_res["status"]
                         
                         if status == "SUCCESS":
@@ -937,7 +954,7 @@ with tab4:
                                     st.session_state.plip_job_id = extracted_job_id
                                     st.session_state.mmgbsa_job_id = extracted_job_id
                                 
-                                dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                                 
                                 st.download_button(
                                     label="⬇️ Download Backmapped Trajectories (.zip)",
@@ -971,7 +988,7 @@ with tab4:
                     st.error(f"Error {response.status_code}: {response.text}")
 
 # ==========================================
-# TAB 5: GROMACS (Trajectory Analysis)
+# TAB 5: GROMACS (Uses Render API)
 # ==========================================
 with tab5:
     st.header("Step 5: GROMACS Trajectory Analysis (RMSD, RMSF, Rg)")
@@ -996,7 +1013,7 @@ with tab5:
         if st.button("Run GROMACS Analysis"):
             st.session_state.traj_zip_bytes = None
             
-            with st.spinner("Calculating RMSD, RMSF, and Rg..."):
+            with st.spinner("Calculating RMSD, RMSF, and Rg on Render..."):
                 payload = {
                     "job_id": job_id_input_traj,
                     "rmsd_group": rmsd_group,
@@ -1005,13 +1022,13 @@ with tab5:
                 }
                 
                 try:
-                    response = requests.post(f"{API_URL}/analysis/trajectory", json=payload)
+                    response = requests.post(f"{RENDER_API_URL}/analysis/trajectory", json=payload)
                     if response.status_code == 200:
                         task_id = response.json()["task_id"]
                         status_placeholder = st.empty()
                         
                         while True:
-                            status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                            status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                             status = status_res["status"]
                             
                             if status == "SUCCESS":
@@ -1019,7 +1036,7 @@ with tab5:
                                 if task_result.get("status") == "success":
                                     status_placeholder.success("✅ GROMACS Analysis Complete!")
                                     
-                                    dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                    dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                                     if dl.status_code == 200:
                                         st.session_state.traj_zip_bytes = dl.content
                                         time.sleep(1)
@@ -1063,7 +1080,7 @@ with tab5:
             st.warning(f"Could not load images from zip: {e}")
 
 # ==========================================
-# TAB 6: TTClust
+# TAB 6: TTClust (Uses Render API)
 # ==========================================
 with tab6:
     st.header("Step 6: Trajectory Clustering (TTClust)")
@@ -1083,20 +1100,20 @@ with tab6:
         if st.button("Run TTClust Analysis"):
             st.session_state.ttclust_zip_bytes = None
             
-            with st.spinner(f"Executing TTClust Trajectory Clustering into {n_clusters} clusters..."):
+            with st.spinner(f"Executing TTClust Trajectory Clustering into {n_clusters} clusters on Render..."):
                 payload = {
                     "job_id": job_id_input_ttclust,
                     "n_clusters": n_clusters
                 }
                 
                 try:
-                    response = requests.post(f"{API_URL}/analysis/ttclust", json=payload)
+                    response = requests.post(f"{RENDER_API_URL}/analysis/ttclust", json=payload)
                     if response.status_code == 200:
                         task_id = response.json()["task_id"]
                         status_placeholder = st.empty()
                         
                         while True:
-                            status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                            status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                             status = status_res["status"]
                             
                             if status == "SUCCESS":
@@ -1104,7 +1121,7 @@ with tab6:
                                 if task_result.get("status") == "success":
                                     status_placeholder.success("✅ TTClust Analysis Complete!")
                                     
-                                    dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                    dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                                     if dl.status_code == 200:
                                         st.session_state.ttclust_zip_bytes = dl.content
                                         time.sleep(1)
@@ -1148,7 +1165,7 @@ with tab6:
             st.warning(f"Could not load images from zip: {e}")
 
 # ==========================================
-# TAB 7: PLIP
+# TAB 7: PLIP (Uses Render API)
 # ==========================================
 with tab7:
     st.header("Step 7: PLIP (Protein-Ligand Interaction Profiler)")
@@ -1164,23 +1181,23 @@ with tab7:
         if st.button("Run PLIP Pipeline"):
             st.session_state.plip_zip_bytes = None
             
-            with st.spinner("Executing full PLIP pipeline... This may take several minutes."):
+            with st.spinner("Executing full PLIP pipeline on Render... This may take several minutes."):
                 try:
-                    response = requests.post(f"{API_URL}/analysis/plip", json={"job_id": job_id_input})
+                    response = requests.post(f"{RENDER_API_URL}/analysis/plip", json={"job_id": job_id_input})
                     
                     if response.status_code == 200:
                         task_id = response.json().get("task_id")
                         if task_id:
                             status_placeholder = st.empty()
                             while True:
-                                status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                                status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                                 status = status_res["status"]
                                 
                                 if status == "SUCCESS":
                                     task_result = status_res.get("result", {})
                                     if task_result.get("status") == "success":
                                         status_placeholder.success("✅ PLIP Pipeline Complete!")
-                                        dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                        dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                                         if dl.status_code == 200:
                                             st.session_state.plip_zip_bytes = dl.content
                                             time.sleep(1)
@@ -1242,7 +1259,7 @@ with tab7:
             st.error(f"Error reading zip file: {e}")
 
 # ==========================================
-# TAB 8: MM-GBSA
+# TAB 8: MM-GBSA (Uses Render API)
 # ==========================================
 with tab8:
     st.header("Step 8: MM-GBSA & Decomposition Analysis")
@@ -1267,7 +1284,7 @@ with tab8:
             st.session_state.mmgbsa_zip_bytes = None
             st.session_state.mmgbsa_summary = ""
             
-            with st.spinner("Executing MM-GBSA Analysis... This requires significant time."):
+            with st.spinner("Executing MM-GBSA Analysis on Render... This requires significant time."):
                 payload = {
                     "job_id": job_id_input_mmgbsa,
                     "ligand_name": st.session_state.get("ligand_code", "A20"),
@@ -1278,13 +1295,13 @@ with tab8:
                 }
                 
                 try:
-                    response = requests.post(f"{API_URL}/analysis/mmpbsa", json=payload)
+                    response = requests.post(f"{RENDER_API_URL}/analysis/mmpbsa", json=payload)
                     if response.status_code == 200:
                         task_id = response.json()["task_id"]
                         status_placeholder = st.empty()
                         
                         while True:
-                            status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                            status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                             status = status_res["status"]
                             
                             if status == "SUCCESS":
@@ -1293,7 +1310,7 @@ with tab8:
                                     status_placeholder.success("✅ MM-GBSA Complete!")
                                     st.session_state.mmgbsa_summary = task_result.get("summary_data", "")
                                     
-                                    dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                    dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                                     if dl.status_code == 200:
                                         st.session_state.mmgbsa_zip_bytes = dl.content
                                         time.sleep(1)
@@ -1341,7 +1358,7 @@ with tab8:
             st.warning(f"Could not load images from zip: {e}")
 
 # ==========================================
-# TAB 9: PCA and FEL Analysis
+# TAB 9: PCA and FEL Analysis (Uses Render API)
 # ==========================================
 with tab9:
     st.header("Step 9: Principal Component Analysis (PCA) & FEL")
@@ -1360,20 +1377,20 @@ with tab9:
         if st.button("Run PCA & FEL Analysis"):
             st.session_state.pca_fel_zip_bytes = None
             
-            with st.spinner("Executing Covariance, Eigenvectors, and Free Energy Landscape... This may take a while."):
+            with st.spinner("Executing Covariance, Eigenvectors, and Free Energy Landscape on Render..."):
                 payload = {
                     "job_id": job_id_input_pca,
                     "backbone_group": backbone_group
                 }
                 
                 try:
-                    response = requests.post(f"{API_URL}/analysis/pca-fel", json=payload)
+                    response = requests.post(f"{RENDER_API_URL}/analysis/pca-fel", json=payload)
                     if response.status_code == 200:
                         task_id = response.json()["task_id"]
                         status_placeholder = st.empty()
                         
                         while True:
-                            status_res = requests.get(f"{API_URL}/status/{task_id}").json()
+                            status_res = requests.get(f"{RENDER_API_URL}/status/{task_id}").json()
                             status = status_res["status"]
                             
                             if status == "SUCCESS":
@@ -1381,7 +1398,7 @@ with tab9:
                                 if task_result.get("status") == "success":
                                     status_placeholder.success("✅ PCA and FEL Analysis Complete!")
                                     
-                                    dl = requests.get(f"{API_URL}/download-prep-result/{task_id}")
+                                    dl = requests.get(f"{RENDER_API_URL}/download-prep-result/{task_id}")
                                     if dl.status_code == 200:
                                         st.session_state.pca_fel_zip_bytes = dl.content
                                         time.sleep(1)
