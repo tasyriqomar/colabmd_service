@@ -1305,8 +1305,12 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
 def run_trajectory_analysis_task(job_id: str, rmsd_group: int, rmsf_group: int, rg_group: int):
     """Run RMSD, RMSF, and Rg calculations on the backmapped trajectories."""
     import matplotlib.pyplot as plt
+    import os
+    import subprocess
+    import zipfile
+    from pathlib import Path
     
-    # FIX: Ensure worker process is in a valid directory
+    # 1. Force the parent Python process out of any deleted working directories
     try:
         os.chdir("/app")
     except Exception:
@@ -1323,20 +1327,61 @@ def run_trajectory_analysis_task(job_id: str, rmsd_group: int, rmsf_group: int, 
     ndx_file = xtc_dir / "index.ndx"
     
     if not (tpr_file.exists() and xtc_file.exists() and ndx_file.exists()):
-        return {"status": "error", "message": "Missing required trajectory files (all.xtc, dynamic.tpr, or index.ndx). Please ensure Backmapping completed successfully."}
+        return {
+            "status": "error", 
+            "message": f"Missing required trajectory files in {xtc_dir}. Please ensure Backmapping completed successfully."
+        }
         
     try:
-        # 1. RMSD Calculation (Added cwd=analysis_dir to prevent getcwd() error)
-        rmsd_cmd = f"echo '{rmsd_group} {rmsd_group}' | gmx rms -s {tpr_file} -f {xtc_file} -n {ndx_file} -o {analysis_dir}/rmsd.xvg -tu ns"
-        subprocess.run(rmsd_cmd, shell=True, check=True, capture_output=True, text=True, cwd=analysis_dir)
+        # 1. RMSD Calculation (List args + direct input to eliminate /bin/sh)
+        subprocess.run(
+            [
+                "gmx", "rms",
+                "-s", str(tpr_file),
+                "-f", str(xtc_file),
+                "-n", str(ndx_file),
+                "-o", str(analysis_dir / "rmsd.xvg"),
+                "-tu", "ns"
+            ],
+            input=f"{rmsd_group}\n{rmsd_group}\n",
+            text=True,
+            capture_output=True,
+            cwd=str(analysis_dir),
+            check=True
+        )
         
-        # 2. RMSF Calculation (-res calculates average per residue)
-        rmsf_cmd = f"echo '{rmsf_group}' | gmx rmsf -s {tpr_file} -f {xtc_file} -n {ndx_file} -o {analysis_dir}/rmsf.xvg -res"
-        subprocess.run(rmsf_cmd, shell=True, check=True, capture_output=True, text=True, cwd=analysis_dir)
+        # 2. RMSF Calculation
+        subprocess.run(
+            [
+                "gmx", "rmsf",
+                "-s", str(tpr_file),
+                "-f", str(xtc_file),
+                "-n", str(ndx_file),
+                "-o", str(analysis_dir / "rmsf.xvg"),
+                "-res"
+            ],
+            input=f"{rmsf_group}\n",
+            text=True,
+            capture_output=True,
+            cwd=str(analysis_dir),
+            check=True
+        )
         
-        # 3. Radius of Gyration Calculation (Outputs in ps, NO -tu flag)
-        rg_cmd = f"echo '{rg_group}' | gmx gyrate -s {tpr_file} -f {xtc_file} -n {ndx_file} -o {analysis_dir}/gyration.xvg"
-        subprocess.run(rg_cmd, shell=True, check=True, capture_output=True, text=True, cwd=analysis_dir)
+        # 3. Radius of Gyration Calculation
+        subprocess.run(
+            [
+                "gmx", "gyrate",
+                "-s", str(tpr_file),
+                "-f", str(xtc_file),
+                "-n", str(ndx_file),
+                "-o", str(analysis_dir / "gyration.xvg")
+            ],
+            input=f"{rg_group}\n",
+            text=True,
+            capture_output=True,
+            cwd=str(analysis_dir),
+            check=True
+        )
         
         # --- Helper function to plot XVG files ---
         def plot_xvg(xvg_path, title, xlabel, ylabel, out_png, x_scale=1.0):
@@ -1379,7 +1424,8 @@ def run_trajectory_analysis_task(job_id: str, rmsd_group: int, rmsf_group: int, 
         
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else e.stdout
-        return {"status": "error", "message": f"GROMACS Command Failed: {e.cmd}\nDetails:\n{error_msg}"}
+        cmd_str = " ".join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
+        return {"status": "error", "message": f"GROMACS Command Failed: {cmd_str}\nDetails:\n{error_msg}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
