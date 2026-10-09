@@ -979,6 +979,11 @@ def run_plip_analysis_task(job_id: str):
     except Exception:
         pass
 
+    # Force Matplotlib to use the headless 'Agg' backend in this worker process and child subprocesses
+    os.environ["MPLBACKEND"] = "Agg"
+    env = os.environ.copy()
+    env["MPLBACKEND"] = "Agg"
+
     work_dir = f"/app/shared_data/{job_id}/analysis/plip"
     os.makedirs(work_dir, exist_ok=True)
     
@@ -995,7 +1000,7 @@ def run_plip_analysis_task(job_id: str):
         # Step 1: Convert trajectories to concatenated PDB
         subprocess.run(
             ["gmx", "trjconv", "-s", tpr_file, "-n", ndx_file, "-f", xtc_file, "-dt", "1000", "-o", "concatenated.pdb"],
-            input="0\n", cwd=work_dir, check=True, text=True, capture_output=True
+            input="0\n", cwd=work_dir, check=True, text=True, capture_output=True, env=env
         )
         
         # Download repository for analysis scripts
@@ -1055,18 +1060,18 @@ def run_plip_analysis_task(job_id: str):
                     f.write(content)
         
         # Step 3: Split the concatenated.pdb
-        subprocess.run(["python", "split_pdb.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["python", "split_pdb.py"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
         
         # Step 4: Run the PLIP bash script
-        subprocess.run(["bash", "plip.sh"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["bash", "plip.sh"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
         
         # Step 5: Convert XML to JSON
-        subprocess.run(["python", "convert_xml_to_json.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["python", "convert_xml_to_json.py"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
         
         shutil.copy(os.path.join(analysis_dir, "split_pdbs", "extracted_data.json"), os.path.join(analysis_dir, "extracted_data.json"))
         
         # Step 6: Process JSON to generate CSVs
-        subprocess.run(["python", "process_json.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["python", "process_json.py"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
         
         bond_csv = os.path.join(analysis_dir, "bond_csv_files")
         split_bond_csv = os.path.join(analysis_dir, "split_pdbs", "bond_csv_files")
@@ -1076,10 +1081,10 @@ def run_plip_analysis_task(job_id: str):
             shutil.copytree(bond_csv, split_bond_csv)
         
         # Step 7: Generate tables, figures, and plots
-        subprocess.run(["python", "percentage_interactions.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
-        subprocess.run(["python", "type_interactions_color.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
-        subprocess.run(["python", "residue_interactions_color_csv_a.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
-        subprocess.run(["python", "timeline_interaction_color.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["python", "percentage_interactions.py"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
+        subprocess.run(["python", "type_interactions_color.py"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
+        subprocess.run(["python", "residue_interactions_color_csv_a.py"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
+        subprocess.run(["python", "timeline_interaction_color.py"], cwd=analysis_dir, check=True, capture_output=True, text=True, env=env)
         
         # Step 8: Zip results
         zip_path = os.path.join(work_dir, "plip_results.zip")
