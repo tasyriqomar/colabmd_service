@@ -1100,6 +1100,25 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
     except Exception:
         pass
 
+    # 1. Inject Conda/Micromamba paths into the environment PATH
+    extra_paths = ["/root/micromamba/bin", "/usr/local/bin", os.path.expanduser("~/.local/bin"), "/opt/conda/bin"]
+    current_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = ":".join(extra_paths) + ":" + current_path
+
+    # 2. Dynamically locate gmx_MMPBSA
+    mmpbsa_exec = shutil.which("gmx_MMPBSA")
+    if not mmpbsa_exec:
+        for candidate in ["/root/micromamba/bin/gmx_MMPBSA", "/usr/local/bin/gmx_MMPBSA", "/opt/conda/bin/gmx_MMPBSA"]:
+            if os.path.exists(candidate):
+                mmpbsa_exec = candidate
+                break
+
+    if not mmpbsa_exec:
+        return {
+            "status": "error",
+            "message": "gmx_MMPBSA executable not found in PATH or standard conda directories. Please check Colab installation."
+        }
+
     job_dir = Path(f"/app/shared_data/{job_id}")
     analysis_dir = job_dir / "analysis"
     mmgbsa_dir = analysis_dir / "MMGBSA"
@@ -1150,11 +1169,9 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
         # ====================================================================
         # 3. DYNAMICALLY UPDATE mmpbsa.in & PYTHON SCRIPTS
         # ====================================================================
-        # Calculate End Frame
         xtc_files = list(xtc_dir.glob("aa_*ns.xtc"))
         detected_end = len(xtc_files) if xtc_files else 1
         
-        # --- ADDED: USE REQUESTED UI FRAMES (Fallback to detected if 0) ---
         final_end_frame = end_frame if end_frame > 0 else detected_end
         
         # Parse aa.gro for Protein Residue Count and Start/End Indices
@@ -1164,7 +1181,7 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
         
         if (mmgbsa_dir / "aa.gro").exists():
             with open(mmgbsa_dir / "aa.gro", "r") as f:
-                lines = f.readlines()[2:-1] # Skip header and box vectors
+                lines = f.readlines()[2:-1]
                 for line in lines:
                     try:
                         res_num_str = line[0:5].strip()
@@ -1192,12 +1209,10 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
             
         total_residues = (ligand_res_num - protein_start_res) + 1
         
-        # Rewrite mmpbsa.in
         mmpbsa_file = mmgbsa_dir / "mmpbsa.in"
         with open(mmpbsa_file, "r") as f:
             mmpbsa_text = f.read()
             
-        # --- UPDATED: INJECT FINAL FRAME VARIABLES ---
         mmpbsa_text = re.sub(r"startframe\s*=\s*\d+", f"startframe={start_frame}", mmpbsa_text)
         mmpbsa_text = re.sub(r"endframe\s*=\s*\d+", f"endframe={final_end_frame}", mmpbsa_text)
         mmpbsa_text = re.sub(r'print_res\s*=\s*".*?"', f'print_res="A/{protein_start_res}-{protein_end_res} B/{ligand_res_num}"', mmpbsa_text)
@@ -1205,7 +1220,6 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
         with open(mmpbsa_file, "w") as f:
             f.write(mmpbsa_text)
 
-        # PATCH: Fix hardcoded Google Drive paths in per-residue.py
         per_res_script = mmgbsa_dir / "per-residue.py"
         if per_res_script.exists():
             with open(per_res_script, "r") as f:
@@ -1214,7 +1228,6 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
             with open(per_res_script, "w") as f:
                 f.write(pr_text)
 
-        # PATCH: Fix paths and hardcoded limits in heatmap.py
         heatmap_script = mmgbsa_dir / "heatmap.py"
         if heatmap_script.exists():
             with open(heatmap_script, "r") as f:
@@ -1226,9 +1239,9 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
                 f.write(hm_text)
         # ====================================================================
         
-        # 4. Execute gmx_MMPBSA
+        # 4. Execute gmx_MMPBSA using resolved executable
         mmpbsa_cmd = [
-            "gmx_MMPBSA", "-O", "-i", "mmpbsa.in", "-cs", "dynamic.tpr",
+            mmpbsa_exec, "-O", "-i", "mmpbsa.in", "-cs", "dynamic.tpr",
             "-ct", "all.xtc", "-ci", "index.ndx", "-cg", str(protein_idx), str(ligand_idx),
             "-cp", "topol.top", "-o", "FINAL_RESULTS_MMPBSA.dat",
             "-eo", "FINAL_RESULTS_MMPBSA.csv", "-do", "FINAL_DECOMP_MMPBSA.dat",
@@ -1236,49 +1249,40 @@ def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_
         ]
         
         try:
-            # First attempt to run the full pipeline
-            subprocess.run(mmpbsa_cmd, cwd=mmgbsa_dir, check=True, capture_output=True, text=True)
+            subprocess.run(mmpbsa_cmd, cwd=mmgbsa_dir, check=True, capture_output=True, text=True, env=os.environ)
         except subprocess.CalledProcessError as e:
             error_output = e.stderr if e.stderr else e.stdout
-            # If it crashed because of the AmberTools formatting bug
             if "ValueError: could not convert string to float: '*********'" in error_output:
                 print("Detected AmberTools '*********' formatting bug. Patching output files and resuming...")
                 
-                # FIX: Find ALL intermediate files (decomp files are .out, not .mdout)
                 for bad_file in mmgbsa_dir.glob("_GMXMMPBSA_*"):
                     if bad_file.is_file():
                         try:
                             with open(bad_file, "r") as f:
                                 mdout_text = f.read()
                             
-                            # If the file contains the broken asterisks, patch it
                             if "*********" in mdout_text:
-                                # Replace exactly 9 asterisks with a safe 9-character float
                                 patched_text = mdout_text.replace("*********", " 9999.999")
                                 with open(bad_file, "w") as f:
                                     f.write(patched_text)
                         except UnicodeDecodeError:
-                            # Safely skip any binary files (like temporary trajectories)
                             pass
                 
-                # Re-run gmx_MMPBSA with the --rewrite-output flag. 
                 rewrite_cmd = [
-                    "gmx_MMPBSA", "-O", "-i", "mmpbsa.in", "-cs", "dynamic.tpr",
+                    mmpbsa_exec, "-O", "-i", "mmpbsa.in", "-cs", "dynamic.tpr",
                     "-ct", "all.xtc", "-ci", "index.ndx", "-cg", str(protein_idx), str(ligand_idx),
                     "-cp", "topol.top", "-o", "FINAL_RESULTS_MMPBSA.dat",
                     "-eo", "FINAL_RESULTS_MMPBSA.csv", "-do", "FINAL_DECOMP_MMPBSA.dat",
                     "-deo", "FINAL_DECOMP_MMPBSA.csv", "-nogui", "--rewrite-output"
                 ]
-                subprocess.run(rewrite_cmd, cwd=mmgbsa_dir, check=True, capture_output=True, text=True)
+                subprocess.run(rewrite_cmd, cwd=mmgbsa_dir, check=True, capture_output=True, text=True, env=os.environ)
             else:
-                # If it crashed for a different reason, bubble it up to the frontend
                 raise e
         
         # 5. Generate Figures
         subprocess.run(["python", "per-residue.py"], cwd=mmgbsa_dir, check=True, capture_output=True, text=True)
         subprocess.run(["python", "heatmap.py"], cwd=mmgbsa_dir, check=True, capture_output=True, text=True)
         
-        # Extract the Delta results from the .dat file
         summary_data = ""
         res_dat = mmgbsa_dir / "FINAL_RESULTS_MMPBSA.dat"
         if res_dat.exists():
