@@ -967,7 +967,18 @@ def run_backmapping_workflow(work_dir: str, protein_pdb: str, ligand_map: str,
 
 @celery_app.task
 def run_plip_analysis_task(job_id: str):
-    """Run the complete PLIP analysis pipeline for Tab 5."""
+    """Run the complete PLIP analysis pipeline for Tab 7."""
+    import os
+    import shutil
+    import subprocess
+    import zipfile
+    from pathlib import Path
+
+    try:
+        os.chdir("/app")
+    except Exception:
+        pass
+
     work_dir = f"/app/shared_data/{job_id}/analysis/plip"
     os.makedirs(work_dir, exist_ok=True)
     
@@ -977,43 +988,42 @@ def run_plip_analysis_task(job_id: str):
     ndx_file = f"{backmap_dir}/index.ndx"
     xtc_file = f"{backmap_dir}/all.xtc"
     
+    if not (os.path.exists(tpr_file) and os.path.exists(xtc_file) and os.path.exists(ndx_file)):
+        return {"status": "error", "message": f"Missing required backmapped files in {backmap_dir}. Please run Backmapping first."}
+
     try:
         # Step 1: Convert trajectories to concatenated PDB
-        trjconv_cmd = f"echo '0' | gmx trjconv -s {tpr_file} -n {ndx_file} -f {xtc_file} -dt 1000 -o concatenated.pdb"
-        subprocess.run(trjconv_cmd, shell=True, cwd=work_dir, check=True)
+        subprocess.run(
+            ["gmx", "trjconv", "-s", tpr_file, "-n", ndx_file, "-f", xtc_file, "-dt", "1000", "-o", "concatenated.pdb"],
+            input="0\n", cwd=work_dir, check=True, text=True, capture_output=True
+        )
         
-        # ==================================================================
-        # FIX: Bypass Git GnuTLS issues by downloading the repo natively
-        # ==================================================================
-        import requests # (Ensure this is imported at the top of worker.py)
-        
+        # Download repository for analysis scripts
+        import requests
         repo_url = "https://github.com/tasyriqomar/ColabMD-Edu_Protein-Ligand/archive/refs/heads/main.zip"
         zip_out_path = os.path.join(work_dir, "repo.zip")
         
-        # Download the zip
         r = requests.get(repo_url)
         with open(zip_out_path, "wb") as f:
             f.write(r.content)
             
-        # Extract the zip
         with zipfile.ZipFile(zip_out_path, 'r') as zip_ref:
             zip_ref.extractall(work_dir)
             
-        # Move the Analysis folder and clean up
         extracted_folder = os.path.join(work_dir, "ColabMD-Edu_Protein-Ligand-main")
         analysis_dir = os.path.join(work_dir, "Analysis")
         
+        if os.path.exists(analysis_dir):
+            shutil.rmtree(analysis_dir)
+            
         shutil.copytree(os.path.join(extracted_folder, "Analysis"), analysis_dir, dirs_exist_ok=True)
         shutil.rmtree(extracted_folder)
-        os.remove(zip_out_path)
-        # ==================================================================
+        if os.path.exists(zip_out_path):
+            os.remove(zip_out_path)
+            
+        shutil.move(os.path.join(work_dir, "concatenated.pdb"), os.path.join(analysis_dir, "concatenated.pdb"))
         
-        subprocess.run(f"mv concatenated.pdb {analysis_dir}/", shell=True, cwd=work_dir, check=True)
-        
-        # ------------------------------------------------------------------
         # ON-THE-FLY SCRIPT PATCHING
-        # Fix hardcoded Google Drive paths, remove PyMOL dependencies, and fix plots
-        # ------------------------------------------------------------------
         colab_base_path = "/content/drive/MyDrive/ColabMD-Edu_Protein-Ligand"
         scripts_to_patch = [
             "plip.sh", 
@@ -1032,49 +1042,47 @@ def run_plip_analysis_task(job_id: str):
                 with open(script_path, "r") as f:
                     content = f.read()
                 
-                # Replace Colab paths with current Docker path
                 content = content.replace(f"{colab_base_path}/Analysis", analysis_dir)
                 content = content.replace(colab_base_path, os.path.dirname(analysis_dir))
                 
-                # Remove PyMOL flags from the bash script to prevent crashes
                 if script_name == "plip.sh":
                     content = content.replace("--pics", "").replace("-p", "").replace("--pymol", "").replace("-y", "")
                 
-                # NEW: Tilt the X-axis labels vertically (90 degrees) and reduce font size to prevent overlapping
                 if script_name == "timeline_interaction_color.py":
-                    # Inject a Matplotlib rotation rule right before the layout is tightened/saved
                     content = content.replace("plt.tight_layout()", "plt.xticks(rotation=90, fontsize=7)\n    plt.tight_layout()")
                     
                 with open(script_path, "w") as f:
                     f.write(content)
-        # ------------------------------------------------------------------
         
         # Step 3: Split the concatenated.pdb
-        subprocess.run(["python", "split_pdb.py"], cwd=analysis_dir, check=True)
+        subprocess.run(["python", "split_pdb.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
         
         # Step 4: Run the PLIP bash script
-        subprocess.run(["bash", "plip.sh"], cwd=analysis_dir, check=True)
+        subprocess.run(["bash", "plip.sh"], cwd=analysis_dir, check=True, capture_output=True, text=True)
         
         # Step 5: Convert XML to JSON
-        subprocess.run(["python", "convert_xml_to_json.py"], cwd=analysis_dir, check=True)
+        subprocess.run(["python", "convert_xml_to_json.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
         
-        # Copy the extracted JSON up to the main Analysis directory so BOTH scripts find it
-        subprocess.run("cp split_pdbs/extracted_data.json .", shell=True, cwd=analysis_dir, check=True)
+        shutil.copy(os.path.join(analysis_dir, "split_pdbs", "extracted_data.json"), os.path.join(analysis_dir, "extracted_data.json"))
         
         # Step 6: Process JSON to generate CSVs
-        subprocess.run(["python", "process_json.py"], cwd=analysis_dir, check=True)
+        subprocess.run(["python", "process_json.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
         
-        # Copy the generated CSV folder into split_pdbs where the timeline script expects it
-        subprocess.run("cp -r bond_csv_files split_pdbs/", shell=True, cwd=analysis_dir, check=False)
+        bond_csv = os.path.join(analysis_dir, "bond_csv_files")
+        split_bond_csv = os.path.join(analysis_dir, "split_pdbs", "bond_csv_files")
+        if os.path.exists(bond_csv):
+            if os.path.exists(split_bond_csv):
+                shutil.rmtree(split_bond_csv)
+            shutil.copytree(bond_csv, split_bond_csv)
         
         # Step 7: Generate tables, figures, and plots
-        subprocess.run(["python", "percentage_interactions.py"], cwd=analysis_dir, check=True)
-        subprocess.run(["python", "type_interactions_color.py"], cwd=analysis_dir, check=True)
-        subprocess.run(["python", "residue_interactions_color_csv_a.py"], cwd=analysis_dir, check=True)
-        subprocess.run(["python", "timeline_interaction_color.py"], cwd=analysis_dir, check=True)
+        subprocess.run(["python", "percentage_interactions.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["python", "type_interactions_color.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["python", "residue_interactions_color_csv_a.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["python", "timeline_interaction_color.py"], cwd=analysis_dir, check=True, capture_output=True, text=True)
         
-        # Step 8: Zip the results
-        zip_path = f"{work_dir}/plip_results.zip"
+        # Step 8: Zip results
+        zip_path = os.path.join(work_dir, "plip_results.zip")
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for root, dirs, files in os.walk(analysis_dir):
                 for file in files:
@@ -1089,7 +1097,11 @@ def run_plip_analysis_task(job_id: str):
         }
         
     except subprocess.CalledProcessError as e:
-        return {"status": "error", "message": f"PLIP Pipeline failed at command: {e.cmd}\nError: {e.stderr}"}
+        err = e.stderr if e.stderr else (e.stdout if e.stdout else "No error output recorded.")
+        cmd_str = " ".join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
+        return {"status": "error", "message": f"PLIP Pipeline failed at command: {cmd_str}\nError Details:\n{err}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # Add to colabmd_service/tasks/worker.py
 @celery_app.task
