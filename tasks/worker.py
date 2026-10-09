@@ -1094,6 +1094,12 @@ def run_plip_analysis_task(job_id: str):
 # Add to colabmd_service/tasks/worker.py
 @celery_app.task
 def run_mmpbsa_task(job_id: str, ligand_name: str, protein_idx: int = 1, ligand_idx: int = 13, start_frame: int = 1, end_frame: int = 0):
+    # Ensure worker process resides in a valid directory
+    try:
+        os.chdir("/app")
+    except Exception:
+        pass
+
     job_dir = Path(f"/app/shared_data/{job_id}")
     analysis_dir = job_dir / "analysis"
     mmgbsa_dir = analysis_dir / "MMGBSA"
